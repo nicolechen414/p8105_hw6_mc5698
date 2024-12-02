@@ -13,6 +13,9 @@ library(tidyverse)
 library(rnoaa)
 library(broom)
 library(purrr)
+library(modelr)
+library(boot) 
+library(rsample)
 library(p8105.datasets)
 ```
 
@@ -93,7 +96,8 @@ filtered_data <- homicide_data %>%
     !city_state %in% omit_cities,
     victim_race %in% c("White", "Black")
   ) %>%
-  drop_na(victim_age)
+  drop_na(victim_age, victim_sex, victim_race, solved)
+
 
 ```
 
@@ -105,7 +109,7 @@ baltimore_data <- filtered_data %>%
 baltimore_model <- glm(solved ~ victim_age + victim_sex + victim_race, 
                        data = baltimore_data, family = binomial)
 
-baltimore_results <- tidy(baltimore_model, conf.int = TRUE) %>%
+baltimore_results <- broom::tidy(baltimore_model, conf.int = TRUE) %>%
   filter(term == "victim_sexMale") %>%
   mutate(
     odds_ratio = exp(estimate),
@@ -113,7 +117,8 @@ baltimore_results <- tidy(baltimore_model, conf.int = TRUE) %>%
     ci_upper = exp(conf.high)
   )
 
-baltimore_results
+baltimore_results %>% 
+  select(odds_ratio, ci_lower, ci_upper)
 
 ```
 ```{r warning=FALSE}
@@ -124,7 +129,7 @@ city_results <- filtered_data %>%
   mutate(
     model = map(data, ~ glm(solved ~ victim_age + victim_sex + victim_race, 
                             data = ., family = binomial)),
-    tidy_model = map(model, ~ tryCatch(tidy(.x, conf.int = TRUE), 
+    tidy_model = purrr::map(model, ~ tryCatch(tidy(.x, conf.int = TRUE), 
                                        error = function(e) NULL))) %>%
   unnest(tidy_model) %>%
   filter(term == "victim_sexMale") %>%
@@ -134,7 +139,7 @@ city_results <- filtered_data %>%
     ci_upper = exp(conf.high)
   ) %>%
   select(city_state, odds_ratio, ci_lower, ci_upper)
-city_results
+city_results 
 ```
 
 ```{r}
@@ -152,5 +157,108 @@ city_results %>%
   ) +
   theme_minimal()
 
+```
+The graph shows the estimated odds ratios and 95% confidence intervals for solving homicides comparing male to female victims across various U.S. cities. In most cities, such as Baltimore and Atlanta, the ORs are below 1, suggesting that homicides involving male victims are less likely to be solved compared to female victims. Moreover, some cities like Fresno and Birmingham, have confidence intervals that cross 1, implying that the difference in solving rates between male and female victims may not be statistically significant in those locations.
+
+#Problem 3
+```{r}
+#Read data
+birthweight_data <- read_csv("data/birthweight.csv")
+
+# Data Cleaning
+omit_cols <- c("bhead", "blength", "delwt", "fincome", "gaweeks", "mheight", 
+               "momage", "parity", "ppbmi", "smoken", "wtgain", "bwt")
+
+birthweight_clean <- birthweight_data %>%
+  select(all_of(omit_cols)) %>%
+  drop_na()
+
+```
+```{r}
+# Split the Data
+set.seed(123)
+birthweight_split <- initial_split(birthweight_clean, prop = 0.7)
+birthweight_train <- training(birthweight_split)
+birthweight_test <- testing(birthweight_split)
+
+# Fit a linear model 
+linear_model <- lm(bwt ~ ., data = birthweight_train)
+
+# Use broom to tidy the model output
+linear_model_summary <- tidy(linear_model)
+```
+
+```{r}
+# Predict dataset
+birthweight_test <- birthweight_test %>%
+  mutate(predicted_bwt = predict(linear_model, newdata = birthweight_test))
+
+# R-squared and RMSE
+rmse <- birthweight_test %>%
+  summarise(rmse = sqrt(mean((bwt - predicted_bwt)^2))) %>%
+  pull(rmse)
+
+rsq <- birthweight_test %>%
+  summarise(
+    ss_total = sum((bwt - mean(bwt))^2),
+    ss_residual = sum((bwt - predicted_bwt)^2),
+    rsq = 1 - (ss_residual / ss_total)
+  ) %>%
+  pull(rsq)
+
+model_metrics <- tibble(
+  Metric = c("RMSE", "R-squared"),
+  Value = c(rmse, rsq)
+)
+model_metrics
+
+
+```
+
+```{r}
+#Cross-Validation
+set.seed(123)
+cv_folds <- vfold_cv(birthweight_train, v = 10)
+
+cv_results <- cv_folds %>%
+  mutate(
+    model = map(splits, ~ lm(bwt ~ ., data = analysis(.x))),
+    metrics = map2(
+      splits, model, 
+      ~ {
+        test_data <- assessment(.x)
+        predictions <- predict(.y, newdata = test_data)
+        tibble(
+          rmse = sqrt(mean((test_data$bwt - predictions)^2)),
+          rsq = 1 - sum((test_data$bwt - predictions)^2) / sum((test_data$bwt - mean(test_data$bwt))^2) )
+      }
+    )
+  ) %>%
+  unnest(metrics)
+
+cv_summary <- cv_results %>%
+  summarise(
+    avg_rmse = mean(rmse),
+    avg_rsq = mean(rsq)
+  )
+cv_summary
+
+```
+
+```{r}
+# Bootstrapping
+set.seed(123)
+bootstrap_results <- boot(
+  data = birthweight_train,
+  statistic = function(data, indices) {
+    sample_data <- data[indices, ]
+    model <- lm(bwt ~ ., data = sample_data)
+    coef(model)
+  },
+  R = 1000
+)
+
+bootstrap_summary <- boot.ci(bootstrap_results, type = "perc")
+bootstrap_summary
 ```
 
