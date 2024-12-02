@@ -1,0 +1,75 @@
+---
+title: "p8105_hw6_mc5698"
+output: html_document
+date: "2024-11-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Problem 1
+```{r include=FALSE}
+library(tidyverse)
+library(rnoaa)
+library(broom)
+library(p8105.datasets)
+```
+
+```{r}
+#Read dataset
+set.seed(1)
+
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+```{r}
+#Define function
+bootstrap_results <- map_df(1:5000, function(i) {
+  sample_df <- weather_df %>% sample_frac(size = 1, replace = TRUE)
+  lm_model <- lm(tmax ~ tmin, data = sample_df)
+  
+  glance_metrics <- glance(lm_model)
+  tidy_metrics <- tidy(lm_model)
+  
+  r_squared <- glance_metrics$r.squared
+  log_beta <- log(tidy_metrics$estimate[1] * tidy_metrics$estimate[2])
+  
+  tibble(
+    r_squared = r_squared,
+    log_beta = log_beta
+  )
+})
+
+```
+```{r}
+# Confidence Intervals
+ci_r_squared <- quantile(bootstrap_results$r_squared, probs = c(0.025, 0.975))
+ci_log_beta <- quantile(bootstrap_results$log_beta, probs = c(0.025, 0.975))
+
+ci_r_squared
+ci_log_beta
+```
+
+```{r}
+# Plot Results
+bootstrap_results %>%
+  pivot_longer(everything(), names_to = "metric", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "blue", alpha = 0.7) +
+  facet_wrap(~ metric, scales = "free", ncol = 1) +
+  theme_minimal() +
+  labs(title = "Bootstrap Distributions", x = "Value", y = "Count")
+```
+
+#Problem 2
