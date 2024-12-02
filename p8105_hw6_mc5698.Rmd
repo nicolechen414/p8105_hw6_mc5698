@@ -23,8 +23,6 @@ library(p8105.datasets)
 #Problem 1
 ```{r message=FALSE}
 #Read dataset
-set.seed(1)
-
 weather_df = 
   rnoaa::meteo_pull_monitors(
     c("USW00094728"),
@@ -40,16 +38,17 @@ weather_df =
 
 ```{r}
 #Define function
-bootstrap_results <- map_df(1:5000, function(i) {
+set.seed(1)
+bootstrap<- 
+  map_df(1:5000, function(i) {
   sample_df <- weather_df %>% sample_frac(size = 1, replace = TRUE)
   lm_model <- lm(tmax ~ tmin, data = sample_df)
   
-  glance_metrics <- glance(lm_model)
-  tidy_metrics <- tidy(lm_model)
+  glance_metrics <- broom::glance(lm_model)
+  tidy_metrics <- broom::tidy(lm_model)
   
   r_squared <- glance_metrics$r.squared
   log_beta <- log(tidy_metrics$estimate[1] * tidy_metrics$estimate[2])
-  
   tibble(
     r_squared = r_squared,
     log_beta = log_beta)})
@@ -58,19 +57,19 @@ bootstrap_results <- map_df(1:5000, function(i) {
 
 ```{r}
 # Confidence Intervals
-ci_r_squared <- quantile(bootstrap_results$r_squared, probs = c(0.025, 0.975))
-ci_log_beta <- quantile(bootstrap_results$log_beta, probs = c(0.025, 0.975))
+ci_r_squared <- quantile(bootstrap$r_squared, probs = c(0.025, 0.975))
+ci_log_beta <- quantile(bootstrap$log_beta, probs = c(0.025, 0.975))
 
 ci_r_squared
 ci_log_beta
 ```
 
 ```{r}
-# Plot Results
-bootstrap_results %>%
+# Plot
+bootstrap %>%
   pivot_longer(everything(), names_to = "metric", values_to = "value") %>%
   ggplot(aes(x = value)) +
-  geom_histogram(bins = 30, fill = "blue", alpha = 0.7) +
+  geom_histogram(bins = 30, fill = "pink", alpha = 0.7) +
   facet_wrap(~ metric, scales = "free", ncol = 1) +
   theme_minimal() +
   labs(title = "Bootstrap Distributions", x = "Value", y = "Count")
@@ -86,44 +85,42 @@ homicide_data <- read_csv("data/homicide-data.csv")
 # Data Cleaning
 omit_cities <- c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL")
 
-filtered_data <- homicide_data %>%
+clean_data <- homicide_data %>%
+  janitor::clean_names() %>%
   mutate(
     city_state = paste(city, state, sep = ", "),
-    solved = if_else(str_detect(disposition, "Closed"), 1, 0),
-    victim_age = as.numeric(victim_age)
+    solved = ifelse(disposition == "Closed by arrest", 1, 0)
   ) %>%
-  filter(
-    !city_state %in% omit_cities,
-    victim_race %in% c("White", "Black")
-  ) %>%
-  drop_na(victim_age, victim_sex, victim_race, solved)
+  filter(!city_state %in% omit_cities,
+         victim_race %in% c("White", "Black")) %>%
+  mutate(victim_age = as.numeric(victim_age)) %>%
+  filter(!is.na(victim_age))
 
 
 ```
 
 ```{r}
 # Model for Baltimore
-baltimore_data <- filtered_data %>%
-  filter(city_state == "Baltimore, MD")
-
+baltimore_data <- clean_data %>%
+  filter(city_state == "Baltimore, MD") 
+  
 baltimore_model <- glm(solved ~ victim_age + victim_sex + victim_race, 
-                       data = baltimore_data, family = binomial)
+                       data = baltimore_data, family = binomial())
 
 baltimore_results <- broom::tidy(baltimore_model, conf.int = TRUE) %>%
   filter(term == "victim_sexMale") %>%
   mutate(
     odds_ratio = exp(estimate),
     ci_lower = exp(conf.low),
-    ci_upper = exp(conf.high)
-  )
-
-baltimore_results %>% 
+    ci_upper = exp(conf.high)) %>% 
   select(odds_ratio, ci_lower, ci_upper)
+
+baltimore_results 
 
 ```
 ```{r warning=FALSE}
 #For All Cities
-city_results <- filtered_data %>%
+city_results <- clean_data %>%
   group_by(city_state) %>%
   nest() %>%
   mutate(
@@ -158,10 +155,10 @@ city_results %>%
   theme_minimal()
 
 ```
-The graph shows the estimated odds ratios and 95% confidence intervals for solving homicides comparing male to female victims across various U.S. cities. In most cities, such as Baltimore and Atlanta, the ORs are below 1, suggesting that homicides involving male victims are less likely to be solved compared to female victims. Moreover, some cities like Fresno and Birmingham, have confidence intervals that cross 1, implying that the difference in solving rates between male and female victims may not be statistically significant in those locations.
+The graph shows the estimated odds ratios and 95% confidence intervals for solving homicides comparing male to female victims across various U.S. cities. In most cities, such as Baltimore and New York, the ORs are below 1, suggesting that homicides involving male victims are less likely to be solved compared to female victims. Moreover, some cities like Fresno and Boston, have confidence intervals that cross 1, implying that the difference in solving rates between male and female victims may not be statistically significant in those locations.
 
 #Problem 3
-```{r}
+```{r message=FALSE}
 #Read data
 birthweight_data <- read_csv("data/birthweight.csv")
 
@@ -170,10 +167,12 @@ omit_cols <- c("bhead", "blength", "delwt", "fincome", "gaweeks", "mheight",
                "momage", "parity", "ppbmi", "smoken", "wtgain", "bwt")
 
 birthweight_clean <- birthweight_data %>%
+  janitor::clean_names() %>%
   select(all_of(omit_cols)) %>%
   drop_na()
 
 ```
+
 ```{r}
 # Split the Data
 set.seed(123)
